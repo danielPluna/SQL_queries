@@ -1,1 +1,108 @@
 
+WITH asset_contracts AS (
+    -- Pre-compute the asset contract mapping to avoid expensive subquery in JOIN
+    SELECT 
+        contract_id, 
+        asset_issuer, 
+        REPLACE(asset_code, CHR(0), '') AS asset_code, 
+        asset_type
+    FROM 
+        stellar.contract_data
+    WHERE 
+        contract_key_type = 'ScValTypeScvLedgerKeyContractInstance'
+        AND asset_issuer <> '' 
+        AND asset_code <> ''
+    
+    UNION
+    
+    SELECT 
+        'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA' AS contract_id, 
+        'GDMTVHLWJTHSUDMZVVMXXH6VJHA2ZV3HNG5LYNAZ6RTWB7GISM6PGTUV' AS asset_issuer, 
+        'XLM' AS asset_code, 
+        'native' AS asset_type
+),
+
+-- Filter trades first to reduce data volume with specific date range
+filtered_trades AS (
+    SELECT 
+        t.*,
+        date_trunc('day', t.closed_at) AS closed_at_day,
+        CASE WHEN t.selling_asset_code = '' THEN 'XLM' ELSE t.selling_asset_code END AS normalized_selling_asset_code
+    FROM 
+        stellar.history_trades t
+    WHERE 
+        t.buying_asset_issuer = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
+        AND t.buying_asset_code = 'USDC'
+        -- Date filter for specific 6-month period
+        AND t.closed_at >= DATE '2022-02-01'  -- MODIFY THIS START DATE
+        AND t.closed_at <= DATE '2022-07-31'  -- MODIFY THIS END DATE
+),
+
+-- Count trades per asset
+asset_trade_counts AS (
+    SELECT
+        normalized_selling_asset_code,
+        COUNT(*) AS total_trades
+    FROM
+        filtered_trades
+    GROUP BY
+        normalized_selling_asset_code
+),
+
+daily_prices AS (
+    SELECT 
+        CASE WHEN t.selling_asset_code = '' THEN 'XLM' ELSE t.selling_asset_code END AS selling_asset_code, 
+        'USDC' AS buying_asset_code,
+        try_cast(t.price_n AS double) / try_cast(t.price_d AS double) AS price, 
+        t.closed_at_day,
+        cd.contract_id,
+        t.selling_asset_id,
+        atc.total_trades,
+        ROW_NUMBER() OVER (
+            PARTITION BY cd.contract_id, t.closed_at_day 
+            ORDER BY t.closed_at DESC
+        ) AS rn
+    FROM 
+        filtered_trades t
+    JOIN 
+        asset_contracts cd
+        ON (
+            (t.selling_asset_issuer = cd.asset_issuer AND t.selling_asset_code = cd.asset_code)
+            OR 
+            (t.selling_asset_type = 'native' AND cd.contract_id = 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+        )
+    LEFT JOIN
+        asset_trade_counts atc
+        ON atc.normalized_selling_asset_code = 
+           CASE WHEN t.selling_asset_code = '' THEN 'XLM' ELSE t.selling_asset_code END
+)
+
+-- Add period identifier to results
+SELECT
+    '2022-02 to 2022-07' AS period,  -- MODIFY THIS LABEL
+    selling_asset_code,
+    buying_asset_code,
+    price,
+    closed_at_day,
+    contract_id,
+    selling_asset_id,
+    total_trades
+FROM
+    daily_prices
+WHERE
+    rn = 1
+
+-- Only include USDC reference price if this is the first period you're querying
+UNION
+SELECT 
+    '2022-02 to 2022-07' AS period,  -- MODIFY THIS LABEL
+    'USDC' AS selling_asset_code, 
+    'USDC' AS buying_asset_code, 
+    1 AS price, 
+    date '2022-02-01' AS closed_at_day,  -- MODIFY THIS DATE
+    'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75' AS contract_id, 
+    -4025621231271332000 AS selling_asset_id,
+    0 AS total_trades
+
+ORDER BY 
+    closed_at_day
