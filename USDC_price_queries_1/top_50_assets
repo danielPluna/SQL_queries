@@ -1,0 +1,79 @@
+WITH all_periods AS (
+    -- Period 1: Feb 2021 - Jul 2021
+    SELECT DISTINCT selling_asset_code, total_trades
+    FROM query_4748635
+    WHERE total_trades IS NOT NULL
+    
+    UNION ALL
+    
+    -- Period 2: Aug 2021 - Jan 2022
+    SELECT DISTINCT selling_asset_code, total_trades
+    FROM query_4789624
+    WHERE total_trades IS NOT NULL
+    
+    UNION ALL
+    
+    -- Period 3: Feb 2022 - Jul 2022
+    SELECT DISTINCT selling_asset_code, total_trades
+    FROM query_4789653
+    WHERE total_trades IS NOT NULL
+    
+    UNION ALL
+    
+    -- Period 4: Aug 2022 - Jan 2023
+    SELECT DISTINCT selling_asset_code, total_trades
+    FROM query_4789755
+    WHERE total_trades IS NOT NULL
+    
+    UNION ALL
+    
+    -- Period 5: Feb 2023 - Jul 2023
+    SELECT DISTINCT selling_asset_code, total_trades
+    FROM query_4789758
+    WHERE total_trades IS NOT NULL
+    
+    UNION ALL
+    
+    -- Period 6: Aug 2023 - Jan 2024
+    SELECT DISTINCT selling_asset_code, total_trades
+    FROM query_4796214
+    WHERE total_trades IS NOT NULL
+    
+    UNION ALL
+    
+    -- Period 7: Feb 2024 - Jul 2024
+    SELECT DISTINCT selling_asset_code, total_trades
+    FROM query_4796222
+    WHERE total_trades IS NOT NULL
+    
+    UNION ALL
+    
+    -- Period 8: Aug 2024 - Feb 2025
+    SELECT DISTINCT selling_asset_code, total_trades
+    FROM query_4796233
+    WHERE total_trades IS NOT NULL
+),
+-- Aggregate all trades and rank assets
+asset_ranking AS (
+    SELECT 
+        selling_asset_code,
+        SUM(total_trades) AS all_time_trades,
+        RANK() OVER (ORDER BY SUM(total_trades) DESC) AS trade_rank
+    FROM 
+        all_periods
+    WHERE
+        selling_asset_code != 'USDC' -- Exclude USDC-USDC pairs
+    GROUP BY 
+        selling_asset_code
+)
+-- Get top 50 assets
+SELECT 
+    trade_rank,
+    selling_asset_code AS ticker,
+    all_time_trades
+FROM 
+    asset_ranking
+WHERE 
+    trade_rank <= 50
+ORDER BY 
+    trade_rank
